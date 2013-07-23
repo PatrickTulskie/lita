@@ -7,9 +7,11 @@ module Lita
       stderr_file = options[:stderr_file] || "/tmp/lita.stderr.log"
       
       case pid
-      when nil # Nil for the fork value means we're in the child process
+      when nil
+        # Nil for the fork value means we're in the child process
         redirect_streams(stdout_file, stderr_file)
-      when -1 # Couldn't fork for some reason - usually OS related
+      when -1
+        # Couldn't fork for some reason - usually OS related
         raise "Forking failed for some reason.  Does this OS support forking?"
       else
         # Try to kill any existing processes, write pid, exit
