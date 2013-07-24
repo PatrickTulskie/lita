@@ -57,10 +57,10 @@ module Lita
     
     def setup_daemon
       # Rename the process so it's obvious in process lists
-      $0 = "lita_bot"
+      $0 = "lita"
 
       # Spawn a deamon for our bot
-      Lita::Daemon.start(fork, :pid_file => options[:pid_file], :stdout_file => options[:stdout], :stderr_file => options[:stderr])
+      Lita::Daemon.daemonize(:pid_file => options[:pid_file], :stdout_file => options[:stdout], :stderr_file => options[:stderr])
 
       # Set up signals for our daemon so it knows how to exit
       Signal.trap("QUIT") { exit }

@@ -1,6 +1,26 @@
 module Lita
   class Daemon
     
+    ForkingException = Class.new(Exception)
+    
+    # Get us ready for daemonization
+    def self.daemonize(options = { })
+      # Kill the original parent process if we can fork
+      case fork
+      when nil
+        # Break away from the terminal, become a new process & group leader
+        Process.setsid
+        start(fork, options)
+      when -1
+        raise ForkingException, "Forking failed for some reason.  Does this OS support forking?"
+      else
+        exit
+      end
+    end
+    
+    private
+    
+    # Starts the final form of the daemon, writes out a pid, redirects logs, etc.
     def self.start(pid, options = { })
       pid_file    = options[:pid_file] || "/tmp/lita.pid"
       stdout_file = options[:stdout_file] || "/tmp/lita.stdout.log"
@@ -8,19 +28,17 @@ module Lita
       
       case pid
       when nil
-        # Nil for the fork value means we're in the child process
+        # nil for the fork value means we're in the child process
         redirect_streams(stdout_file, stderr_file)
       when -1
         # Couldn't fork for some reason - usually OS related
-        raise "Forking failed for some reason.  Does this OS support forking?"
+        raise ForkingException, "Forking failed for some reason.  Does this OS support forking?"
       else
         # Try to kill any existing processes, write pid, exit
         write_pid(pid, pid_file) if kill(pid, pid_file)
         exit
       end
     end
-    
-    private
     
     # Attempts to write the pid of the forked process to the pid file
     def self.write_pid(pid, pid_file)
@@ -57,14 +75,12 @@ module Lita
     end
     
     def self.redirect_stream(stream, location, stream_name, mode: 'a', sync: true)
-      if File.writable?(location)
-        log_file = File.new(location, mode)
-      else
-        default_location = File.join(Dir.home, "lita.#{stream_name}.log")
-        warn "Unable to write to: #{location}. Writing to `#{default_location}' instead."
-        log_file = File.new(default_location, mode)
-      end
-      
+      log_file = File.new(location, mode)
+    rescue Errno::EPERM, Errno::EACCESS
+      default_location = File.join(Dir.home, "lita.#{stream_name}.log")
+      warn "Unable to write to: #{location}. Writing to `#{default_location}' instead."
+      log_file = File.new(default_location, mode)
+    ensure
       stream.reopen(log_file)
       stream.sync = sync
     end
