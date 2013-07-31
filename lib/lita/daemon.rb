@@ -48,7 +48,7 @@ FATAL
       pid = File.read(@pid_path).strip.to_i
       Process.kill("TERM", pid)
     rescue Errno::ESRCH, RangeError, Errno::EPERM
-      abort "Failed to kill existing Lita process #{pid}."
+      puts "Failed to kill existing Lita process #{pid}.  Starting anyway..."
     end
 
     # Redirect the standard streams to a log file.
