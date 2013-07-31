@@ -47,7 +47,7 @@ FATAL
     def kill_existing_process
       pid = File.read(@pid_path).strip.to_i
       Process.kill("TERM", pid)
-    rescue Errno::ESRCH, RangeError, Errno::EPERM
+    rescue Errno::ESRCH, RangeError, Errno::EPERM, Errno::ENOENT
       puts "Failed to kill existing Lita process #{pid}.  Starting anyway..."
     end
 
