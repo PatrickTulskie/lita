@@ -1,35 +1,44 @@
+require "fileutils"
+
 module Lita
+  # Converts Lita to a daemon process.
   class Daemon
-    
-    ForkingException = Class.new(Exception)
-    
-    # Get us ready for daemonization
-    def self.daemonize(options = { })
+    # @param pid_path [String] The path to the PID file.
+    # @param log_path [String] The path to the log file.
+    # @param kill_existing [Boolean] Whether or not to kill existing processes.
+    def initialize(pid_path, log_path, kill_existing)
+      @pid_path = pid_path
+      @log_path = log_path
+      @kill_existing = kill_existing # Ignoring this for now... maybe implement later.
+    end
+
+    # Converts Lita to a daemon process.
+    # @return [void]
+    def daemonize
       # Kill the original parent process if we can fork
       case fork
       when nil
         # Break away from the terminal, become a new process & group leader
         Process.setsid
-        start(fork, options)
+        start(fork)
       when -1
         raise ForkingException, "Forking failed for some reason.  Does this OS support forking?"
       else
         exit
       end
     end
-    
+
     private
-    
+
     # Starts the final form of the daemon, writes out a pid, redirects logs, etc.
-    def self.start(pid, options = { })
-      pid_file    = options[:pid_file] || "/tmp/lita.pid"
-      stdout_file = options[:stdout_file] || "/tmp/lita.stdout.log"
-      stderr_file = options[:stderr_file] || "/tmp/lita.stderr.log"
-      
+    def start(pid)
+      pid_file = @pid_path || "/tmp/lita.pid"
+      log_file = @log_path || "/tmp/lita.log"
+
       case pid
       when nil
         # nil for the fork value means we're in the child process
-        redirect_streams(stdout_file, stderr_file)
+        redirect_streams(log_file)
       when -1
         # Couldn't fork for some reason - usually OS related
         raise ForkingException, "Forking failed for some reason.  Does this OS support forking?"
@@ -39,9 +48,9 @@ module Lita
         exit
       end
     end
-    
+
     # Attempts to write the pid of the forked process to the pid file
-    def self.write_pid(pid, pid_file)
+    def write_pid(pid, pid_file)
       File.open(pid_file, "w") { |f| f.write(pid) }
     rescue Errno::EPERM, Errno::EACCES
       safe_pid_location = File.join(Dir.home, "lita.pid")
@@ -53,7 +62,7 @@ module Lita
     end
 
     # Attempts to kill any existing processes for rolling restarts
-    def self.kill(pid, pidfile)
+    def kill(pid, pidfile)
       existing_pid = open(pidfile).read.strip.to_i
       Process.kill("QUIT", existing_pid)
       true
@@ -68,13 +77,13 @@ module Lita
     end
 
     # Redirect the stdout and stderr to log files
-    def self.redirect_streams(outfile, errfile)
+    def redirect_streams(log_file)
       redirect_stream($stdin, '/dev/null', 'stdin', mode: 'r', sync: false)
-      redirect_stream($stdout, outfile, 'stdout')
-      redirect_stream($stderr, errfile, 'stderr')
+      redirect_stream($stdout, log_file, 'stdout')
+      redirect_stream($stderr, log_file, 'stderr')
     end
     
-    def self.redirect_stream(stream, location, stream_name, mode: 'a', sync: true)
+    def redirect_stream(stream, location, stream_name, mode: 'a', sync: true)
       log_file = File.new(location, mode)
     rescue Errno::EPERM, Errno::EACCESS
       default_location = File.join(Dir.home, "lita.#{stream_name}.log")
@@ -84,6 +93,6 @@ module Lita
       stream.reopen(log_file)
       stream.sync = sync
     end
-    
+
   end
 end
