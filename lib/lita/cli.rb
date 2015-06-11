@@ -39,16 +39,16 @@ module Lita
       default: false,
       desc: "Run Lita as a daemon",
       type: :boolean
+    option :pid_file,
+      aliases: "-p",
+      banner: "PID_FILE",
+      default: "/var/run/lita.pid",
+      desc: "Location for pid files when daemonized"
     option :log_file,
       aliases: "-l",
       banner: "PATH",
       default: file_path_for("lita.log", "/var/log"),
       desc: "Path where the log file should be written when daemonized"
-    option :pid_file,
-      aliases: "-p",
-      banner: "PATH",
-      default: file_path_for("lita.pid", "/var/run"),
-      desc: "Path where the PID file should be written when daemonized"
     option :kill,
       aliases: "-k",
       default: false,
@@ -64,15 +64,7 @@ module Lita
         abort
       end
 
-      if options[:daemonize]
-        say I18n.t("lita.cli.daemon_deprecated"), :red
-
-        Daemon.new(
-          options[:pid_file],
-          options[:log_file],
-          options[:kill]
-        ).daemonize
-      end
+      setup_daemon if options[:daemonize]
 
       Lita.run(options[:config])
     end
@@ -124,6 +116,21 @@ module Lita
     map %w(-v --version) => :version
 
     private
+
+    def setup_daemon
+      # Rename the process so it's obvious in process lists
+      $0 = "lita"
+
+      # Spawn a deamon for our bot
+      daemon = Lita::Daemon.new(pid_file: options[:pid_file], log_file: options[:log_file])
+      daemon.daemonize
+
+      # Set up signals for our daemon so it knows how to exit
+      Signal.trap("QUIT") { exit }
+      %w(HUP INT).each do |signal|
+        Signal.trap(signal, "IGNORE")
+      end
+    end
 
     def badges_message
       say I18n.t("lita.cli.badges_reminder"), :yellow

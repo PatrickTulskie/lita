@@ -2,57 +2,100 @@ require "fileutils"
 
 module Lita
   # Converts Lita to a daemon process.
-  # @deprecated Will be removed in Lita 5.0. Use your operating system's process manager instead.
   class Daemon
+
+    attr_accessor :pid_file, :log_file
+
     # @param pid_path [String] The path to the PID file.
     # @param log_path [String] The path to the log file.
     # @param kill_existing [Boolean] Whether or not to kill existing processes.
-    def initialize(pid_path, log_path, kill_existing)
-      @pid_path = pid_path
-      @log_path = log_path
-      @kill_existing = kill_existing
+    def initialize(pid_file: nil, log_file: nil)
+      self.pid_file = pid_file
+      self.log_file = log_file
+      # @kill_existing = kill_existing # Ignoring this for now... maybe implement later.
     end
 
     # Converts Lita to a daemon process.
     # @return [void]
     def daemonize
-      handle_existing_process
-      Process.daemon(true)
-      File.open(@pid_path, "w") { |f| f.write(Process.pid) }
-      set_up_logs
-      at_exit { FileUtils.rm(@pid_path) if File.exist?(@pid_path) }
+      # Kill the original parent process if we can fork
+      case fork
+      when nil
+        # Break away from the terminal, become a new process & group leader
+        Process.setsid
+        start(fork)
+      when -1
+        raise ForkingException, "Forking failed for some reason.  Does this OS support forking?"
+      else
+        exit
+      end
     end
 
     private
 
-    # Abort if Lita is already running.
-    def ensure_not_running
-      abort I18n.t("lita.daemon.pid_exists", path: @pid_path) if File.exist?(@pid_path)
-    end
+    # Starts the final form of the daemon, writes out a pid, redirects logs, etc.
+    def start(pid)
+      self.pid_file ||= "/tmp/lita.pid"
+      self.log_file ||= "/tmp/lita.log"
 
-    # Call the appropriate method depending on kill mode.
-    def handle_existing_process
-      if @kill_existing && File.exist?(@pid_path)
-        kill_existing_process
+      case pid
+      when nil
+        # nil for the fork value means we're in the child process
+        redirect_streams(self.log_file)
+      when -1
+        # Couldn't fork for some reason - usually OS related
+        raise ForkingException, "Forking failed for some reason.  Does this OS support forking?"
       else
-        ensure_not_running
+        # Try to kill any existing processes, write pid, exit
+        write_pid(pid, self.pid_file) if kill(pid, self.pid_file)
+        exit
       end
     end
 
-    # Try to kill an existing process.
-    def kill_existing_process
-      pid = File.read(@pid_path).to_s.strip.to_i
-      Process.kill("TERM", pid)
-    rescue Errno::ESRCH, RangeError, Errno::EPERM
-      abort I18n.t("lita.daemon.kill_failure", pid: pid)
+    # Attempts to write the pid of the forked process to the pid file
+    def write_pid(pid, pid_file)
+      File.open(pid_file, "w") { |f| f.write(pid) }
+    rescue Errno::EPERM, Errno::EACCES
+      safe_pid_location = File.join(Dir.home, "lita.pid")
+      warn "Unable to write pid to: #{pid_file}.  Writing pid to #{safe_pid_location} instead."
+      File.open(safe_pid_location, "w") { |f| f.write(pid) }
+    rescue ::Exception => e
+      $stderr.puts "Unable to write pid file: unexpected #{e.class}: #{e}"
+      Process.kill("QUIT", pid)
     end
 
-    # Redirect the standard streams to a log file.
-    def set_up_logs
-      log_file = File.new(@log_path, "a")
-      STDOUT.reopen(log_file)
-      STDERR.reopen(log_file)
-      STDERR.sync = STDOUT.sync = true
+    # Attempts to kill any existing processes for rolling restarts
+    def kill(pid, pidfile)
+      existing_pid = open(pidfile).read.strip.to_i
+      Process.kill("QUIT", existing_pid)
+      true
+    rescue Errno::ESRCH, Errno::ENOENT
+      true
+    rescue Errno::EPERM
+      $stderr.puts "Permission denied trying to kill #{existing_pid}: Errno::EPERM"
+      false
+    rescue ::Exception => e
+      $stderr.puts "Unexpected #{e.class}: #{e}"
+      false
     end
+
+    # Redirect the stdout and stderr to log files
+    def redirect_streams(log_file)
+      redirect_stream($stdin, '/dev/null', 'stdin', mode: 'r', sync: false)
+      redirect_stream($stdout, log_file, 'stdout')
+      redirect_stream($stderr, log_file, 'stderr')
+    end
+    
+    def redirect_stream(stream, location, stream_name, mode: 'a', sync: true)
+      log_file = File.new(location, mode)
+    rescue Errno::EPERM, Errno::EACCESS
+      default_location = File.join(Dir.home, "lita.#{stream_name}.log")
+      warn "Unable to write to: #{location}. Writing to `#{default_location}' instead."
+      log_file = File.new(default_location, mode)
+    ensure
+      stream.reopen(log_file)
+      stream.sync = sync
+    end
+
   end
 end
